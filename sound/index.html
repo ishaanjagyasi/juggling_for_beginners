@@ -1,0 +1,654 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Juggle Synth</title>
+<style>
+  :root {
+    --bg: #f4f2ee; --panel: #ffffff; --ink: #1d1c1a; --muted: #6d6a64; --line: #dedad3;
+    --hand: #2f9e62; --ground: #d2463c; --flight: #2f6fd6; --handled: #8a8680;
+    --bounce: #e08a1e; --accent: #1d1c1a; --accent-ink: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121212; --panel: #1b1b1b; --ink: #ecebe8; --muted: #9a978f; --line: #2c2b29;
+      --hand: #47c683; --ground: #ef6a5f; --flight: #5b93f0; --handled: #8a8680;
+      --bounce: #f2a445; --accent: #ecebe8; --accent-ink: #121212;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; margin-bottom: 20px; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+  #status { color: var(--muted); font-size: 14px; }
+  .spacer { flex: 1; }
+  button {
+    font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+    padding: 7px 14px; border-radius: 8px; cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .grid { display: grid; grid-template-columns: 260px 1fr; gap: 16px; }
+  @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 8px; }
+  #orb-wrap { display: grid; place-items: center; height: 200px; }
+  #orb {
+    width: 120px; height: 120px; border-radius: 50%; background: var(--handled);
+    transition: background 0.25s, transform 0.08s;
+  }
+  #state { text-align: center; font-weight: 600; font-size: 18px; margin-top: 4px; }
+  #last { text-align: center; color: var(--muted); font-size: 13px; min-height: 20px; }
+  canvas { width: 100%; height: 200px; display: block; }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .legend i { display: inline-block; width: 10px; height: 2px; vertical-align: middle; margin-right: 6px; }
+  #log { font: 12px/1.6 ui-monospace, Menlo, monospace; height: 180px; overflow: auto; margin: 0; white-space: pre; }
+  .keys { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px 16px; font-size: 13px; }
+  kbd {
+    font: 12px ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-bottom-width: 2px;
+    border-radius: 4px; padding: 0 5px; margin-right: 6px; background: var(--bg);
+  }
+  input[type=range] { width: 120px; }
+  .stack { display: grid; gap: 16px; margin-top: 16px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Juggle Synth</h1>
+    <span id="status">Not connected — press a key to try demo mode</span>
+    <span class="spacer"></span>
+    <button id="connect" class="primary">Connect ball</button>
+  </header>
+
+  <div class="panel row" style="margin-bottom:16px">
+    <span class="label" style="margin:0 6px 0 0">Sound</span>
+    <button data-preset="glass" aria-pressed="true">Glass</button>
+    <button data-preset="machine" aria-pressed="false">Machine</button>
+    <button data-preset="void" aria-pressed="false">Void</button>
+    <span class="spacer"></span>
+    <label class="row" style="gap:8px;color:var(--muted);font-size:14px">Volume
+      <input id="vol" type="range" min="0" max="1" step="0.01" value="0.8"></label>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <div class="label">Ball</div>
+      <div id="orb-wrap"><div id="orb"></div></div>
+      <div id="state">—</div>
+      <div id="last"></div>
+    </div>
+    <div class="panel">
+      <div class="label">Motion</div>
+      <canvas id="graph"></canvas>
+      <div class="legend">
+        <span><i style="background:var(--flight)"></i>acceleration (0–4 g)</span>
+        <span><i style="background:var(--bounce)"></i>spin (0–1000 °/s)</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="panel">
+      <div class="label">What makes which sound</div>
+      <div class="keys">
+        <span>Tilt the ball in your hand → drone pitch</span>
+        <span>Shake / move → filter opens</span>
+        <span>Spin it → FM growl, flight shimmer</span>
+        <span>Throw → whoosh + rising whistle</span>
+        <span>Catch → bell, higher throw = higher note</span>
+        <span>Floor → crunchy thud, one per bounce</span>
+        <span>Rest in hand → breathing chord</span>
+        <span>Rest on floor → fades to silence</span>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="label">Demo keys (no ball needed) — move the mouse over the graph to tilt / shake</div>
+      <div class="keys">
+        <span><kbd>T</kbd>throw</span><span><kbd>C</kbd>catch</span><span><kbd>G</kbd>hit the floor</span>
+        <span><kbd>H</kbd>rest in hand</span><span><kbd>F</kbd>rest on floor</span><span><kbd>P</kbd>pick up</span>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="label">Events</div>
+      <pre id="log"></pre>
+    </div>
+  </div>
+</main>
+
+<script>
+// ------------------------------------------------------------------ BLE protocol
+// Matches firmware/juggling_ball/juggling_ball.ino
+const SVC    = '9a1e0000-7a4b-4f2b-8c1a-1f0d2b3c4d5e';
+const STREAM = '9a1e0001-7a4b-4f2b-8c1a-1f0d2b3c4d5e';
+const EVENT  = '9a1e0002-7a4b-4f2b-8c1a-1f0d2b3c4d5e';
+const STATES = ['REST_HAND', 'REST_GROUND', 'HANDLED', 'FLIGHT', 'IMPACT', 'CALIB', 'BOUNCING'];
+const EVENTS = { 1: 'THROW', 2: 'CATCH', 3: 'LAND_GROUND', 4: 'REST', 5: 'PICKED_UP',
+                 6: 'HEARTBEAT', 7: 'CAL', 8: 'APEX' };
+
+// ------------------------------------------------------------------ presets
+const PRESETS = {
+  glass: {
+    root: 220, scale: [0, 2, 4, 7, 9], wave: 'triangle',
+    fmRatio: 3.5, fmAmt: 1.2, drive: 1.5, crush: false,
+    reverb: 0.5, delay: 0.3, cutBase: 500, cutRange: 6000,
+    bellRatio: 3.5, clang: [1, 2.76, 5.4, 8.93],
+  },
+  machine: {
+    root: 82.4, scale: [0, 1, 5, 7, 8], wave: 'sawtooth',
+    fmRatio: 1.414, fmAmt: 3, drive: 9, crush: true,
+    reverb: 0.15, delay: 0.45, cutBase: 150, cutRange: 3500,
+    bellRatio: 1.414, clang: [1, 1.41, 2.23, 3.9],
+  },
+  void: {
+    root: 55, scale: [0, 2, 4, 6, 8, 10], wave: 'sine',
+    fmRatio: 0.5, fmAmt: 4, drive: 3, crush: false,
+    reverb: 0.85, delay: 0.55, cutBase: 200, cutRange: 2500,
+    bellRatio: 2.01, clang: [1, 1.93, 3.17, 4.61],
+  },
+};
+
+// ------------------------------------------------------------------ audio engine
+class Engine {
+  constructor() { this.ctx = null; this.P = PRESETS.glass; }
+
+  start() {
+    if (this.ctx) { this.ctx.resume(); return; }
+    const c = this.ctx = new AudioContext();
+
+    this.out = c.createGain();
+    this.out.gain.value = +document.getElementById('vol').value;
+    const comp = c.createDynamicsCompressor();
+    comp.threshold.value = -16; comp.ratio.value = 4;
+    this.out.connect(comp).connect(c.destination);
+
+    this.verb = c.createConvolver();
+    this.verb.buffer = this.impulse(4.5, 2.5);
+    this.verbSend = c.createGain();
+    this.verbSend.connect(this.verb).connect(this.out);
+
+    this.dly = c.createDelay(2);
+    this.dly.delayTime.value = 0.375;
+    const fb = c.createGain(); fb.gain.value = 0.45;
+    const dlp = c.createBiquadFilter(); dlp.type = 'lowpass'; dlp.frequency.value = 2500;
+    this.dlySend = c.createGain();
+    this.dlySend.connect(this.dly).connect(dlp).connect(fb).connect(this.dly);
+    dlp.connect(this.out);
+    dlp.connect(this.verbSend);
+
+    this.bus = c.createGain();
+    this.bus.connect(this.out);
+    this.bus.connect(this.verbSend);
+    this.bus.connect(this.dlySend);
+
+    this.noise = c.createBuffer(1, c.sampleRate * 2, c.sampleRate);
+    const nd = this.noise.getChannelData(0);
+    for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+
+    this.buildDrone();
+    this.buildFlight();
+    this.buildPad();
+    this.setPreset(this.P);
+  }
+
+  get now() { return this.ctx.currentTime; }
+
+  impulse(sec, decay) {
+    const c = this.ctx, n = Math.floor(c.sampleRate * sec), b = c.createBuffer(2, n, c.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = b.getChannelData(ch);
+      for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, decay);
+    }
+    return b;
+  }
+
+  shaperCurve(drive, crush) {
+    const n = 2048, a = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const x = i / (n - 1) * 2 - 1;
+      let y = Math.tanh(drive * x) / Math.tanh(drive);
+      if (crush) y = Math.round(y * 5) / 5;
+      a[i] = y;
+    }
+    return a;
+  }
+
+  noteFreq(deg) {
+    const s = this.P.scale, o = Math.floor(deg / s.length);
+    return this.P.root * Math.pow(2, (s[((deg % s.length) + s.length) % s.length] + 12 * o) / 12);
+  }
+
+  // --- drone: two detuned oscillators + sub, FM, resonant lowpass, drive
+  buildDrone() {
+    const c = this.ctx;
+    this.dOsc1 = c.createOscillator(); this.dOsc2 = c.createOscillator();
+    this.dSub = c.createOscillator(); this.dSub.type = 'sine';
+    this.dMod = c.createOscillator(); this.dMod.type = 'sine';
+    this.dModGain = c.createGain(); this.dModGain.gain.value = 0;
+    this.dMod.connect(this.dModGain);
+    this.dModGain.connect(this.dOsc1.frequency);
+    this.dModGain.connect(this.dOsc2.frequency);
+
+    const mix = c.createGain(); mix.gain.value = 0.3;
+    const sub = c.createGain(); sub.gain.value = 0.45;
+    this.dOsc1.connect(mix); this.dOsc2.connect(mix); this.dSub.connect(sub);
+    this.dFilt = c.createBiquadFilter(); this.dFilt.type = 'lowpass'; this.dFilt.Q.value = 7;
+    this.dShape = c.createWaveShaper();
+    this.dGain = c.createGain(); this.dGain.gain.value = 0;
+    mix.connect(this.dFilt); sub.connect(this.dFilt);
+    this.dFilt.connect(this.dShape).connect(this.dGain).connect(this.bus);
+    [this.dOsc1, this.dOsc2, this.dSub, this.dMod].forEach(o => o.start());
+    this.dronePitch = 110;
+  }
+
+  setDronePitch(f) {
+    const t = this.now;
+    this.dronePitch = f;
+    this.dOsc1.frequency.setTargetAtTime(f, t, 0.06);
+    this.dOsc2.frequency.setTargetAtTime(f * 1.007, t, 0.06);
+    this.dSub.frequency.setTargetAtTime(f / 2, t, 0.06);
+    this.dMod.frequency.setTargetAtTime(f * this.P.fmRatio, t, 0.06);
+  }
+
+  // --- flight: whistle + bandpassed noise through a spin-driven tremolo / ring mod
+  buildFlight() {
+    const c = this.ctx;
+    this.fOsc = c.createOscillator(); this.fOsc.type = 'sine';
+    const oscG = c.createGain(); oscG.gain.value = 0.5;
+    this.fNoise = c.createBufferSource(); this.fNoise.buffer = this.noise; this.fNoise.loop = true;
+    this.fBp = c.createBiquadFilter(); this.fBp.type = 'bandpass'; this.fBp.Q.value = 14;
+    const noiseG = c.createGain(); noiseG.gain.value = 1.2;
+    this.fAm = c.createGain(); this.fAm.gain.value = 0.6;
+    this.fAmOsc = c.createOscillator(); this.fAmOsc.frequency.value = 4;
+    const amDepth = c.createGain(); amDepth.gain.value = 0.5;
+    this.fAmOsc.connect(amDepth).connect(this.fAm.gain);
+    this.fGain = c.createGain(); this.fGain.gain.value = 0;
+    this.fOsc.connect(oscG).connect(this.fAm);
+    this.fNoise.connect(this.fBp).connect(noiseG).connect(this.fAm);
+    this.fAm.connect(this.fGain).connect(this.bus);
+    [this.fOsc, this.fNoise, this.fAmOsc].forEach(o => o.start());
+  }
+
+  flightOn() {
+    const t = this.now, f = this.noteFreq(this.P.scale.length * 2);
+    this.fOsc.frequency.cancelScheduledValues(t);
+    this.fOsc.frequency.setValueAtTime(f, t);
+    this.fOsc.frequency.exponentialRampToValueAtTime(f * 3, t + 1.2);
+    this.fBp.frequency.cancelScheduledValues(t);
+    this.fBp.frequency.setValueAtTime(f * 2, t);
+    this.fBp.frequency.exponentialRampToValueAtTime(f * 6, t + 1.2);
+    this.fGain.gain.cancelScheduledValues(t);
+    this.fGain.gain.setTargetAtTime(0.22, t, 0.03);
+  }
+
+  flightOff() {
+    const t = this.now;
+    this.fGain.gain.cancelScheduledValues(t);
+    this.fGain.gain.setTargetAtTime(0, t, 0.025);
+  }
+
+  // --- pad: three sines, slow breathing, for resting in hand
+  buildPad() {
+    const c = this.ctx;
+    this.padGain = c.createGain(); this.padGain.gain.value = 0;
+    const breath = c.createGain(); breath.gain.value = 0.7;
+    const lfo = c.createOscillator(); lfo.frequency.value = 0.22;
+    const lfoDepth = c.createGain(); lfoDepth.gain.value = 0.3;
+    lfo.connect(lfoDepth).connect(breath.gain);
+    this.padOsc = [0, 1, 2].map(() => {
+      const o = c.createOscillator(); o.type = 'sine';
+      const g = c.createGain(); g.gain.value = 0.25;
+      o.connect(g).connect(breath);
+      o.start();
+      return o;
+    });
+    breath.connect(this.padGain).connect(this.bus);
+    lfo.start();
+  }
+
+  setPreset(P) {
+    this.P = P;
+    if (!this.ctx) return;
+    const t = this.now;
+    this.dOsc1.type = this.dOsc2.type = P.wave;
+    this.dShape.curve = this.shaperCurve(P.drive, P.crush);
+    this.verbSend.gain.setTargetAtTime(P.reverb, t, 0.1);
+    this.dlySend.gain.setTargetAtTime(P.delay, t, 0.1);
+    const n = P.scale.length;
+    [0, 2, 4].forEach((d, i) => this.padOsc[i].frequency.setTargetAtTime(this.noteFreq(n + d), t, 0.2));
+    this.setDronePitch(this.noteFreq(0));
+  }
+
+  // --- one-shots ---------------------------------------------------------
+  env(gainNode, peak, attack, decay, t = this.now) {
+    gainNode.gain.setValueAtTime(0.0001, t);
+    gainNode.gain.exponentialRampToValueAtTime(peak, t + attack);
+    gainNode.gain.exponentialRampToValueAtTime(0.0001, t + attack + decay);
+  }
+
+  bell(freq, amp) {
+    const c = this.ctx, t = this.now;
+    const car = c.createOscillator(), mod = c.createOscillator();
+    const modG = c.createGain(), g = c.createGain();
+    car.frequency.value = freq;
+    mod.frequency.value = freq * this.P.bellRatio;
+    modG.gain.setValueAtTime(freq * 6, t);
+    modG.gain.exponentialRampToValueAtTime(1, t + 1.6);
+    mod.connect(modG).connect(car.frequency);
+    car.connect(g).connect(this.bus);
+    this.env(g, amp, 0.004, 2.4, t);
+    car.start(t); mod.start(t); car.stop(t + 2.6); mod.stop(t + 2.6);
+  }
+
+  noiseBurst(type, freq, amp, dur, sweepTo) {
+    const c = this.ctx, t = this.now;
+    const src = c.createBufferSource(); src.buffer = this.noise;
+    const f = c.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = 3;
+    if (sweepTo) f.frequency.exponentialRampToValueAtTime(sweepTo, t + dur);
+    const g = c.createGain();
+    src.connect(f).connect(g).connect(this.bus);
+    this.env(g, amp, Math.min(0.08, dur / 3), dur, t);
+    src.start(t, Math.random()); src.stop(t + dur + 0.1);
+  }
+
+  whoosh() { this.noiseBurst('bandpass', 300, 0.5, 0.35, 5000); }
+  chirp() {
+    const c = this.ctx, t = this.now, o = c.createOscillator(), g = c.createGain();
+    o.frequency.setValueAtTime(this.noteFreq(this.P.scale.length), t);
+    o.frequency.exponentialRampToValueAtTime(this.noteFreq(this.P.scale.length * 2 + 2), t + 0.12);
+    o.connect(g).connect(this.bus);
+    this.env(g, 0.15, 0.01, 0.15, t);
+    o.start(t); o.stop(t + 0.2);
+  }
+
+  thud(amp) {
+    const c = this.ctx, t = this.now;
+    const o = c.createOscillator(), g = c.createGain(), sh = c.createWaveShaper();
+    sh.curve = this.shaperCurve(6, this.P.crush);
+    o.frequency.setValueAtTime(160, t);
+    o.frequency.exponentialRampToValueAtTime(38, t + 0.28);
+    o.connect(sh).connect(g).connect(this.bus);
+    this.env(g, amp, 0.003, 0.4, t);
+    o.start(t); o.stop(t + 0.5);
+    this.noiseBurst('lowpass', 900, amp * 0.6, 0.12);
+    const base = this.noteFreq(this.P.scale.length) * 1.5;
+    this.P.clang.forEach((r, i) => {
+      const p = c.createOscillator(), pg = c.createGain();
+      p.frequency.value = base * r;
+      p.connect(pg).connect(this.bus);
+      this.env(pg, amp * 0.18 / (i + 1), 0.002, 1.8 / (i + 1), t);
+      p.start(t); p.stop(t + 2);
+    });
+  }
+
+  // --- continuous -------------------------------------------------------
+  setDrone(level, tc) { this.dGain.gain.setTargetAtTime(level, this.now, tc); }
+  setPad(level, tc) { this.padGain.gain.setTargetAtTime(level, this.now, tc); }
+
+  motion(energy, spin) {
+    const t = this.now, P = this.P;
+    const cut = Math.min(18000, P.cutBase + energy * P.cutRange);
+    this.dFilt.frequency.setTargetAtTime(cut, t, 0.05);
+    this.dModGain.gain.setTargetAtTime(this.dronePitch * Math.min(spin / 300, 3) * P.fmAmt, t, 0.08);
+    this.fAmOsc.frequency.setTargetAtTime(3 + spin * 0.15, t, 0.05);
+  }
+}
+
+// ------------------------------------------------------------------ app state
+const eng = new Engine();
+let state = null;
+let energy = 0;
+let lastBounceAt = 0, landedAt = 0, prevMag = 1;
+let lastTilt = -1;
+let lastEventAt = 0;                     // stream packets lag events by ~80 ms
+const hist = [];                         // {a, w} for the graph
+
+const $ = id => document.getElementById(id);
+const COLORS = { REST_HAND: '--hand', REST_GROUND: '--ground', FLIGHT: '--flight',
+                 HANDLED: '--handled', IMPACT: '--handled', BOUNCING: '--bounce', CALIB: '--handled' };
+const LABELS = { REST_HAND: 'Resting in hand', REST_GROUND: 'Resting on floor', FLIGHT: 'In the air',
+                 HANDLED: 'Moving', IMPACT: 'Impact', BOUNCING: 'Bouncing', CALIB: 'Calibrating' };
+
+function log(msg) {
+  const el = $('log');
+  const t = new Date().toLocaleTimeString([], { hour12: false });
+  el.textContent = `${t}  ${msg}\n` + el.textContent.split('\n').slice(0, 60).join('\n');
+}
+
+function setState(s) {
+  if (!s || s === state || !eng.ctx) return;
+  state = s;
+  $('orb').style.background = `var(${COLORS[s] || '--handled'})`;
+  $('state').textContent = LABELS[s] || s;
+  switch (s) {
+    case 'HANDLED':     eng.setDrone(0.2, 0.08);  eng.setPad(0, 0.3);  break;
+    case 'FLIGHT':      eng.setDrone(0.06, 0.05); eng.setPad(0, 0.2);  break;
+    case 'BOUNCING':    eng.setDrone(0.05, 0.1);  eng.setPad(0, 0.2);  break;
+    case 'REST_HAND':   eng.setDrone(0.04, 0.6);  eng.setPad(0.14, 0.8); break;
+    case 'REST_GROUND': eng.setDrone(0, 1.2);     eng.setPad(0, 1.0);
+                        eng.dFilt.frequency.setTargetAtTime(80, eng.now, 0.8); break;
+  }
+  if (s !== 'FLIGHT') eng.flightOff();
+}
+
+function onEvent(type, st, v1, v2) {
+  if (!eng.ctx) return;
+  switch (type) {
+    case 'THROW':
+      eng.whoosh(); eng.flightOn();
+      $('last').textContent = 'throw';
+      break;
+    case 'CATCH': {
+      const h = 9.81 * v1 * v1 / 8;                 // metres
+      const deg = Math.max(0, Math.min(12, Math.round(h * 14)));
+      eng.flightOff();
+      eng.bell(eng.noteFreq(eng.P.scale.length + deg), Math.min(0.6, 0.18 + v2 / 40));
+      $('last').textContent = `catch · ${v1.toFixed(2)} s · ${Math.round(h * 100)} cm`;
+      pulse();
+      break;
+    }
+    case 'LAND_GROUND':
+      eng.flightOff(); eng.thud(0.7); landedAt = performance.now();
+      $('last').textContent = `floor · ${v1.toFixed(2)} s in the air`;
+      pulse();
+      break;
+    case 'PICKED_UP':
+      eng.chirp();
+      break;
+  }
+  if (type !== 'HEARTBEAT' && type !== 'APEX')
+    log(`${type.padEnd(12)} ${type === 'CATCH' || type === 'LAND_GROUND' ? `flight ${v1.toFixed(2)} s  peak ${v2.toFixed(1)} g` : ''}`);
+  if (type !== 'HEARTBEAT') lastEventAt = performance.now();
+  setState(st);
+}
+
+function onSample(ax, ay, az, gx, gy, gz) {
+  const a = Math.hypot(ax, ay, az), w = Math.hypot(gx, gy, gz);
+  hist.push({ a, w }); if (hist.length > 1000) hist.shift();
+  if (!eng.ctx) return;
+
+  energy = 0.85 * energy + 0.15 * (Math.abs(a - 1) + w / 400);
+
+  // tilt picks the drone note, only when the reading is mostly gravity
+  if (Math.abs(a - 1) < 0.3 && state !== 'FLIGHT') {
+    const tilt = Math.acos(Math.max(-1, Math.min(1, az / a)));      // 0..pi
+    const deg = Math.min(7, Math.floor(tilt / Math.PI * 8));
+    if (deg !== lastTilt) { lastTilt = deg; eng.setDronePitch(eng.noteFreq(deg) / 2); }
+  }
+
+  // extra bounces after the first floor hit
+  const now = performance.now();
+  if (state === 'BOUNCING' && a > 2.5 && prevMag <= 2.5 &&
+      now - landedAt > 150 && now - lastBounceAt > 60) {
+    lastBounceAt = now;
+    eng.thud(Math.min(0.5, 0.1 + a / 20));
+    pulse();
+  }
+  prevMag = a;
+}
+
+let orbTimer;
+function pulse() {
+  $('orb').style.transform = 'scale(1.18)';
+  clearTimeout(orbTimer);
+  orbTimer = setTimeout(() => $('orb').style.transform = 'scale(1)', 90);
+}
+
+// motion params go to audio once per packet (every ~80 ms)
+function flushMotion() {
+  if (!eng.ctx || !hist.length) return;
+  const recent = hist.slice(-8);
+  const spin = recent.reduce((m, s) => Math.max(m, s.w), 0);
+  eng.motion(energy, spin);
+}
+
+// ------------------------------------------------------------------ BLE
+let device = null;
+
+async function connect() {
+  eng.start();
+  if (!navigator.bluetooth) {
+    $('status').textContent = 'This browser has no Web Bluetooth — use Chrome';
+    return;
+  }
+  try {
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: 'JuggleBall' }, { services: [SVC] }],
+      optionalServices: [SVC],
+    });
+    device.addEventListener('gattserverdisconnected', () => {
+      $('status').textContent = `${device.name} disconnected`;
+      $('connect').textContent = 'Reconnect';
+    });
+    $('status').textContent = `Connecting to ${device.name}…`;
+    const server = await device.gatt.connect();
+    const svc = await server.getPrimaryService(SVC);
+
+    const ev = await svc.getCharacteristic(EVENT);
+    ev.addEventListener('characteristicvaluechanged', e => {
+      const d = e.target.value;
+      const type = EVENTS[d.getUint8(4)] || `EV${d.getUint8(4)}`;
+      onEvent(type, STATES[d.getUint8(5)], d.getFloat32(8, true), d.getFloat32(12, true));
+    });
+    await ev.startNotifications();
+
+    const st = await svc.getCharacteristic(STREAM);
+    st.addEventListener('characteristicvaluechanged', e => {
+      const d = e.target.value, n = d.getUint8(6);
+      for (let i = 0; i < n; i++) {
+        const o = 8 + i * 12;
+        onSample(d.getInt16(o, true) / 1000, d.getInt16(o + 2, true) / 1000, d.getInt16(o + 4, true) / 1000,
+                 d.getInt16(o + 6, true) / 10, d.getInt16(o + 8, true) / 10, d.getInt16(o + 10, true) / 10);
+      }
+      if (performance.now() - lastEventAt > 250) setState(STATES[d.getUint8(4)]);
+      flushMotion();
+    });
+    await st.startNotifications();
+
+    $('status').textContent = `Connected to ${device.name}`;
+    $('connect').textContent = 'Connected';
+    setState('HANDLED');
+  } catch (err) {
+    $('status').textContent = err.name === 'NotFoundError' ? 'No ball chosen' : `Error: ${err.message}`;
+  }
+}
+$('connect').addEventListener('click', connect);
+
+// ------------------------------------------------------------------ demo mode
+let demoFlight = null, demoThrowAt = 0;
+const demoKeys = {
+  t() {
+    demoThrowAt = performance.now();
+    onEvent('THROW', 'FLIGHT');
+    clearInterval(demoFlight);
+    demoFlight = setInterval(() => {                    // fake spin while airborne
+      for (let i = 0; i < 8; i++) onSample(0, 0, 0.02, 400, 300, 200);
+      flushMotion();
+    }, 80);
+  },
+  c() {
+    clearInterval(demoFlight);
+    const fl = demoThrowAt ? Math.min(1.2, (performance.now() - demoThrowAt) / 1000) : 0.3 + Math.random() * 0.4;
+    demoThrowAt = 0;
+    onEvent('CATCH', 'HANDLED', fl, 6 + Math.random() * 8);
+  },
+  g() {
+    clearInterval(demoFlight);
+    onEvent('LAND_GROUND', 'BOUNCING', 0.5, 12);
+    [260, 480, 650, 780].forEach((ms, i) => setTimeout(() => {
+      if (state !== 'BOUNCING') return;
+      lastBounceAt = 0; landedAt = 0; prevMag = 1;
+      onSample(0, 0, 6 - i, 0, 0, 0); onSample(0, 0, 1, 0, 0, 0);
+    }, ms));
+  },
+  h() { clearInterval(demoFlight); onEvent('REST', 'REST_HAND'); },
+  f() { clearInterval(demoFlight); onEvent('REST', 'REST_GROUND'); },
+  p() { onEvent('PICKED_UP', 'HANDLED'); },
+};
+
+document.addEventListener('keydown', e => {
+  const fn = demoKeys[e.key.toLowerCase()];
+  if (!fn || e.repeat || e.metaKey || e.ctrlKey) return;
+  const first = !eng.ctx;
+  eng.start();
+  if (first) { setState('HANDLED'); $('status').textContent = 'Demo mode'; }
+  fn();
+});
+
+// mouse over the graph = tilt (x) and shake (y) while "in hand"
+let lastMouse = null;
+$('graph').addEventListener('mousemove', e => {
+  if (!eng.ctx || device?.gatt?.connected || state !== 'HANDLED') return;
+  const r = e.currentTarget.getBoundingClientRect();
+  const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+  const tilt = x * Math.PI;
+  const speed = lastMouse ? Math.hypot(e.clientX - lastMouse[0], e.clientY - lastMouse[1]) : 0;
+  lastMouse = [e.clientX, e.clientY];
+  const shake = (1 - y) * 0.4 + Math.min(speed / 60, 1.5);
+  onSample(Math.sin(tilt) * (1 + shake * 0.2), 0, Math.cos(tilt), speed * 4, 0, 0);
+  flushMotion();
+});
+
+// ------------------------------------------------------------------ controls
+document.querySelectorAll('[data-preset]').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-preset]').forEach(x => x.setAttribute('aria-pressed', x === b));
+  eng.setPreset(PRESETS[b.dataset.preset]);
+  lastTilt = -1;
+}));
+$('vol').addEventListener('input', e => { if (eng.ctx) eng.out.gain.setTargetAtTime(+e.target.value, eng.now, 0.05); });
+
+// ------------------------------------------------------------------ graph
+const cv = $('graph'), g2 = cv.getContext('2d');
+function draw() {
+  const dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+  g2.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g2.clearRect(0, 0, W, H);
+  const cs = getComputedStyle(document.documentElement);
+  const css = { getPropertyValue: k => cs.getPropertyValue(k).trim() };
+  g2.strokeStyle = css.getPropertyValue('--line');
+  g2.lineWidth = 1;
+  [0.25, 0.5, 0.75].forEach(f => { g2.beginPath(); g2.moveTo(0, H * f); g2.lineTo(W, H * f); g2.stroke(); });
+  const line = (key, max, color) => {
+    g2.strokeStyle = color; g2.lineWidth = 1.5; g2.beginPath();
+    hist.forEach((s, i) => {
+      const x = W - (hist.length - i) * (W / 1000);
+      const y = H - Math.min(1, s[key] / max) * H;
+      i ? g2.lineTo(x, y) : g2.moveTo(x, y);
+    });
+    g2.stroke();
+  };
+  line('w', 1000, css.getPropertyValue('--bounce'));
+  line('a', 4, css.getPropertyValue('--flight'));
+  requestAnimationFrame(draw);
+}
+draw();
+</script>
+</body>
+</html>

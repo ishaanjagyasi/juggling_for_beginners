@@ -42,3 +42,27 @@ python3 tools/receiver.py --raw        # stream even while at rest
 ```
 
 Samples at 200 Hz; streams 100 Hz over BLE in packets of 8.
+
+## Juggle Synth
+
+`sound/index.html` is a web page that connects to the ball over Web Bluetooth and turns its motion into sound.
+
+```
+cd sound
+python3 -m http.server 8000
+```
+
+Open http://localhost:8000 in **Chrome**, click **Connect ball**. Close `receiver.py` first, because the ball only accepts one connection at a time.
+
+| Ball | Sound |
+|---|---|
+| Moving in hand | drone, brighter with more motion |
+| Tilt | drone note |
+| Spin | FM growl, shimmer in flight |
+| Throw | whoosh + rising whistle |
+| Catch | bell, higher throw = higher note |
+| Floor | distorted thud + clang, per bounce |
+| Rest in hand | breathing chord |
+| Rest on floor | fades to silence |
+
+Three presets: Glass, Machine, Void. Demo mode without the ball: keys `T` throw, `C` catch, `G` floor, `H` rest in hand, `F` rest on floor, `P` pick up; mouse over the graph tilts and shakes.
