@@ -26,7 +26,9 @@
 using namespace Adafruit_LittleFS_Namespace;
 
 // ---------------------------------------------------------------- identity
-#define BALL_ID        1          // change per ball: 1, 2, 3 ...
+#ifndef BALL_ID                   // set per ball at build time, e.g.
+#define BALL_ID        1          //   -DBALL_ID=2
+#endif
 #define FW_VERSION     1
 
 // ---------------------------------------------------------------- timing
@@ -303,6 +305,11 @@ void finishCal() {
 void setup() {
   pinMode(LED_RED, OUTPUT); pinMode(LED_GREEN, OUTPUT); pinMode(LED_BLUE, OUTPUT);
   setLed(0,0,0);
+
+  for (uint8_t i = 0; i < BALL_ID; i++) {   // blink out which ball this is
+    setLed(0, 1, 0); delay(180);
+    setLed(0, 0, 0); delay(220);
+  }
 
   InternalFS.begin();
   cfgDefaults();
