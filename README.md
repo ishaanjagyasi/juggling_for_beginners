@@ -132,6 +132,12 @@ A resting ball sends nothing at all, by design. Add `--raw` to make it stream an
 
 **Rate.** `--osc-rate` is per ball; the default 50 sends every second sample. The balls share one radio, so with three connected each delivers roughly 50–65 samples a second, and the thinned output lands around 25–32 Hz per ball. Events are never thinned.
 
+**Test patch**
+
+`max/juggle_osc_test.maxpat` — open it in Max, run the receiver, and watch. It shows, for all three balls: the six axes, the derived motion values, the current state, a flashing button per event, the flight/height/peak of the last catch or floor hit, and the whole-pattern counters at the bottom. The toggle at the top prints every raw message to the Max console (Cmd-Shift-M); leave it off unless you're debugging, it's noisy.
+
+Numbers only move while a ball is moving. A resting ball sends nothing, by design.
+
 **Routing in Max**
 
 ```
@@ -204,5 +210,6 @@ Do it **after** the board is inside the tennis ball; the foam changes how still 
 | `tools/receiver.py` | connect, print events, log CSV, run calibration |
 | `tools/identify.py` | shake a ball to find out which number it is |
 | `tools/oscout.py` | OSC encoding and the ball-to-address mapping used by `--osc` |
+| `max/juggle_osc_test.maxpat` | Max test patch: every OSC message on screen |
 | `sound/index.html` | Juggle Synth: live view + sound, in Chrome |
 | `battery_pads_annotated.jpg` | where to solder the battery |
