@@ -83,7 +83,66 @@ Each ball gets its own pitch and stereo position: ball 1 left, ball 2 centre, ba
 
 Demo mode without any ball: `T` throw, `C` catch, `G` floor, `H` rest in hand, `F` rest on floor, `P` pick up, `1`/`2`/`3` pick which ball the keys drive. Mouse over the graph tilts and shakes.
 
-## 4. To build and flash the firmware
+## 4. Working with Max (OSC)
+
+This is the main path. Max never touches Bluetooth; the Python receiver does that and forwards everything as OSC.
+
+**Launch order**
+
+1. Power on the balls (they advertise as soon as they have power).
+2. Quit anything else that holds them — a ball accepts **one connection at a time**, so close the Chrome synth page first.
+3. In Max, add `[udpreceive 7400]`.
+4. In Terminal:
+
+   ```
+   cd juggling_for_beginners
+   python3 tools/receiver.py --osc
+   ```
+
+   Wait for `found: ball 1, ball 2, ball 3` and `sending OSC to 127.0.0.1:7400`.
+
+It keeps writing CSV logs at the same time, so a Max session is also a recording.
+
+```
+python3 tools/receiver.py --osc                  # 127.0.0.1:7400
+python3 tools/receiver.py --osc 10.0.0.5:9000    # another machine
+python3 tools/receiver.py --osc --osc-rate 100   # every sample, no thinning
+python3 tools/receiver.py --osc --ball 1 2       # only these balls
+```
+
+**Addresses** — `N` is the ball number.
+
+| Address | Arguments | When |
+|---|---|---|
+| `/ball/N/imu` | `ax ay az gx gy gz` | continuously while moving. Acceleration per axis in g, rotation per axis in °/s |
+| `/ball/N/motion` | `amag wmag tilt energy` | same rate. Total acceleration, total spin, tilt 0–1, smoothed movement |
+| `/ball/N/throw` | `1` | ball leaves the hand |
+| `/ball/N/catch` | `flight_s height_m peak_g` | caught |
+| `/ball/N/floor` | `flight_s height_m peak_g` | hit the floor |
+| `/ball/N/bounce` | `peak_g` | each further bounce (worked out on the computer) |
+| `/ball/N/pickup` | `1` | picked up from rest |
+| `/ball/N/rest` | `0` hand / `1` floor | came to rest |
+| `/ball/N/state` | symbol | on change: `rest_hand` `rest_ground` `handled` `flight` `impact` `bouncing` |
+| `/ball/N/connected` | `1` / `0` | link up or lost |
+| `/juggle/airborne` | `n` | how many balls are in the air right now |
+| `/juggle/balls` | `n` | how many are connected |
+| `/juggle/throws` `/juggle/catches` `/juggle/drops` | `n` | running counts since launch |
+
+A resting ball sends nothing at all, by design. Add `--raw` to make it stream anyway.
+
+**Rate.** `--osc-rate` is per ball; the default 50 sends every second sample. The balls share one radio, so with three connected each delivers roughly 50–65 samples a second, and the thinned output lands around 25–32 Hz per ball. Events are never thinned.
+
+**Routing in Max**
+
+```
+[udpreceive 7400]
+|
+[route /ball/1 /ball/2 /ball/3 /juggle]
+|
+[route /imu /motion /throw /catch /floor /bounce /pickup /rest /state /connected]
+```
+
+## 5. To build and flash the firmware
 
 Only needed to change the ball's code.
 
@@ -144,5 +203,6 @@ Do it **after** the board is inside the tennis ball; the foam changes how still 
 | `firmware/juggling_ball/juggling_ball.ino` | the code running on each ball |
 | `tools/receiver.py` | connect, print events, log CSV, run calibration |
 | `tools/identify.py` | shake a ball to find out which number it is |
+| `tools/oscout.py` | OSC encoding and the ball-to-address mapping used by `--osc` |
 | `sound/index.html` | Juggle Synth: live view + sound, in Chrome |
 | `battery_pads_annotated.jpg` | where to solder the battery |

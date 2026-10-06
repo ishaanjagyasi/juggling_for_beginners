@@ -9,11 +9,15 @@ Receiver / calibration console for JuggleBall.
     python receiver.py --raw               # stream even while at rest
     python receiver.py --calibrate --ball 1    # guided: table, floor, hand, save
     python receiver.py --cal bias --ball 1     # one calibration step
+    python receiver.py --osc                   # also send OSC to Max (127.0.0.1:7400)
+    python receiver.py --osc 10.0.0.5:9000     # OSC somewhere else
 
 Each ball logs to its own CSV: <out>_ball<N>.csv
 """
 import argparse, asyncio, struct, sys, time
 from bleak import BleakScanner, BleakClient
+
+from oscout import OscOut
 
 SVC    = "9a1e0000-7a4b-4f2b-8c1a-1f0d2b3c4d5e"
 STREAM = "9a1e0001-7a4b-4f2b-8c1a-1f0d2b3c4d5e"
@@ -56,8 +60,9 @@ async def find_balls(wanted, timeout=10.0):
 
 
 class Ball:
-    def __init__(self, num, dev, args):
+    def __init__(self, num, dev, args, osc=None):
         self.num, self.dev, self.args = num, dev, args
+        self.osc = osc
         self.csv = None
         self.cal_done = asyncio.Event()
         self.loop = asyncio.get_event_loop()
@@ -74,12 +79,18 @@ class Ball:
         s = f[5:]
         for i in range(n):
             ax, ay, az, gx, gy, gz = s[i * 6:i * 6 + 6]
-            self.csv.write(f"{t0 + i*dt},{state},{ax/1000:.3f},{ay/1000:.3f},"
-                           f"{az/1000:.3f},{gx/10:.1f},{gy/10:.1f},{gz/10:.1f}\n")
+            if self.csv:
+                self.csv.write(f"{t0 + i*dt},{state},{ax/1000:.3f},{ay/1000:.3f},"
+                               f"{az/1000:.3f},{gx/10:.1f},{gy/10:.1f},{gz/10:.1f}\n")
+            if self.osc:
+                self.osc.on_sample(self.num, state, ax / 1000, ay / 1000, az / 1000,
+                                   gx / 10, gy / 10, gz / 10)
 
     def on_event(self, _, data):
         t, typ, st, ball, flags, v1, v2 = struct.unpack("<IBBBBff", data)
         name = EVENTS.get(typ, typ)
+        if self.osc:
+            self.osc.on_event(self.num, typ, st, v1, v2)
         if name == "CAL" and int(v1) in (0xFF, 0x06, 0x07):
             self.loop.call_soon_threadsafe(self.cal_done.set)
         if self.args.calibrate:            # keep the guided prompts readable
@@ -102,6 +113,8 @@ class Ball:
 
     async def session(self, stop):
         async with BleakClient(self.dev) as c:
+            if self.osc:
+                self.osc.set_connected(self.num, True)
             await c.start_notify(EVENT, self.on_event)
             if not (self.args.cal or self.args.calibrate):
                 path = self.open_csv()
@@ -123,6 +136,8 @@ class Ball:
                 return
 
             await stop.wait()
+        if self.osc:
+            self.osc.set_connected(self.num, False)
         if self.csv:
             self.csv.close()
 
@@ -138,8 +153,14 @@ async def main(args):
         sys.exit("no ball found — is it powered and advertising?")
     print("found:", ", ".join(f"ball {n}" for n in balls))
 
+    osc = None
+    if args.osc:
+        host, _, port = args.osc.partition(":")
+        osc = OscOut(host or "127.0.0.1", port or 7400, args.osc_rate)
+        print(f"sending OSC to {osc}")
+
     stop = asyncio.Event()
-    objs = [Ball(n, d, args) for n, d in balls.items()]
+    objs = [Ball(n, d, args, osc) for n, d in balls.items()]
     tasks = [asyncio.create_task(b.session(stop)) for b in objs]
     try:
         await asyncio.gather(*tasks)
@@ -156,6 +177,10 @@ if __name__ == "__main__":
     p.add_argument("--calibrate", action="store_true",
                    help="guided calibration: table, floor, hand, then save")
     p.add_argument("--raw", action="store_true")
+    p.add_argument("--osc", nargs="?", const="127.0.0.1:7400", metavar="HOST:PORT",
+                   help="send OSC (default 127.0.0.1:7400)")
+    p.add_argument("--osc-rate", type=float, default=50,
+                   help="continuous OSC messages per second per ball (default 50)")
     p.add_argument("--out", default=f"capture_{int(time.time())}")
     p.add_argument("-v", "--verbose", action="store_true")
     try:
